@@ -1,3 +1,5 @@
+/* Reference - https://allthingsembedded.net/2020/04/11/mastering-the-gnu-linker-script/ */
+
 EXTERN(vector_table)
 ENTRY(reset_handler)
 MEMORY

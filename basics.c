@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
+
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/exti.h>
 #include <libopencm3/stm32/flash.h>
@@ -27,7 +28,9 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/usart.h>
+#include <libopencm3/cm3/systick.h>
 
+#include "ringbuff.h"
 
 /* 
 ----------------------------
@@ -52,10 +55,13 @@ SPI1   MOSI PA7 (AF5) A6
 */
 
 int _write(int file, char *ptr, int len);
+int _read (int file, char *ptr, int len);
 
+static char char_buf[128] = { 'a' };
+static ringbuf r_buffer;
 
 /*
-  *         The system Clock is configured as follow : 
+  *         The system Clock is configured as follows : 
   *            System Clock source            = PLL (MSI)
   *            SYSCLK(Hz)                     = 80000000
   *            HCLK(Hz)                       = 80000000
@@ -96,7 +102,7 @@ static void clock_setup(void)
 	rcc_wait_for_sysclk_status(RCC_PLL);
 	*/
 
-	/* FIXME - eventually handled internally */
+	/* Set the bus speeds to the SYCLK */
 	rcc_ahb_frequency =  4e6; //80e6;
 	rcc_apb1_frequency = 4e6; //80e6;
 	rcc_apb2_frequency = 4e6; //80e6;
@@ -121,13 +127,32 @@ static void usart_setup(void)
 	usart_set_baudrate(USART2, 9600);
 	usart_set_databits(USART2, 8);
 	usart_set_stopbits(USART2, USART_STOPBITS_1);
-	usart_set_mode(USART2, USART_MODE_TX);
+	usart_set_mode(USART2, USART_MODE_TX_RX);
 	usart_set_parity(USART2, USART_PARITY_NONE);
 	usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
+
+	usart_enable_rx_interrupt(USART2);
 
 	/* Finally enable the USART. */
 	usart_enable(USART2);
 }
+
+
+void usart2_isr (void)
+{
+	/* Check if we were called because of RXNE. */
+	if (((USART_ISR(USART2) & USART_ISR_RXNE) == USART_ISR_RXNE))
+	{
+		/* Retrieve the data from the peripheral. */
+		char tmp = (char)usart_recv(USART2);
+		//ringbuf_write(&r_buffer, tmp);
+		puts(ringbuf_read(&r_buffer));
+
+		//indicator for interrupt being handled..
+		gpio_toggle(GPIOB, GPIO3);
+	}
+}
+
 
 /**
  * Use USART2 as a console.
@@ -141,12 +166,15 @@ int _write(int file, char *ptr, int len)
 {
 	int i;
 
-	if (file == STDOUT_FILENO || file == STDERR_FILENO) {
-		for (i = 0; i < len; i++) {
-			if (ptr[i] == '\n') {
-				usart_send_blocking(USART2, '\r');
+	if (file == STDOUT_FILENO || file == STDERR_FILENO) 
+	{
+		for (i = 0; i < len; i++) 
+		{
+			if (ptr[i] == '\n') 
+			{
+				usart_send_blocking(USART2, (u_int16_t)'\r');
 			}
-			usart_send_blocking(USART2, ptr[i]);
+			usart_send_blocking(USART2, (u_int16_t)ptr[i]);
 		}
 		return i;
 	}
@@ -155,24 +183,38 @@ int _write(int file, char *ptr, int len)
 }
 
 
+int _read (int file, char *ptr, int len)
+{
+	if (file == STDIN_FILENO && !ringbuf_empty(&r_buffer))
+	{
+		ptr = ringbuf_read(&r_buffer);
+		return 0;
+	}
+	errno = EIO;
+	return -1;
+}
+
+
 int main(void)
 {
-	int j = 0;
+	ringbuf_init(&r_buffer, char_buf, 128);
+
 	clock_setup();
+
 	usart_setup();
-	printf("hi guys!\n");
+	nvic_enable_irq(NVIC_USART2_IRQ);
+	nvic_set_priority(NVIC_USART2_IRQ, 1);
+
 
 	/* green led for ticking */
 	gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO3);
 	
+	char* tmp = ringbuf_read(&r_buffer);
+	puts(tmp);
+
 	while (1) 
 	{
-		gpio_toggle(GPIOB, GPIO3);
-
-		for (int i = 0; i < 4000000; i++)
-		{ 
-			__asm__("NOP");
-		}
+		
 	}
 
 	return 0;

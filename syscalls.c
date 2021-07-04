@@ -28,11 +28,10 @@
 
 /* Functions */
 
-int _read (int file, char *ptr, int len)
+/* int _read (int file, char *ptr, int len)
 {
 	return -1;
-}
-
+} */
 
 int _sbrk(int incr)
 {
